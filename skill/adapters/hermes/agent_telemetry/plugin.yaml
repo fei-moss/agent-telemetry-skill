@@ -1,0 +1,9 @@
+name: agent-telemetry
+version: 0.1.0
+description: "Exports Hermes session, API, and tool-call telemetry through agent-telemetry-skill."
+hooks:
+  - pre_llm_call
+  - post_api_request
+  - pre_tool_call
+  - post_tool_call
+  - on_session_end
