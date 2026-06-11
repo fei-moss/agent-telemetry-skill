@@ -1,0 +1,32 @@
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.coverage
+.mypy_cache/
+.ruff_cache/
+
+# Local telemetry state / runtime data (keep test fixtures)
+*.jsonl
+!tests/fixtures/*.jsonl
+.agent-telemetry/
+local-spans.jsonl
+traces*.jsonl
+
+# Env / secrets — never commit real endpoints/tokens
+.env
+*.env
+config.json
+!**/plugin.yaml
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

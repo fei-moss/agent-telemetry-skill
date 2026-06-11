@@ -1,0 +1,31 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 2s
+    send_batch_size: 256
+  resource:
+    attributes:
+      - key: deployment.pipeline
+        value: agent-telemetry-skill
+        action: upsert
+
+exporters:
+  debug:
+    verbosity: detailed
+  # Replace this with your production endpoint.
+  # otlphttp/your_backend:
+  #   endpoint: https://telemetry.example.com
+  #   headers:
+  #     Authorization: Bearer ${env:AGENT_TELEMETRY_INGEST_TOKEN}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [resource, batch]
+      exporters: [debug]

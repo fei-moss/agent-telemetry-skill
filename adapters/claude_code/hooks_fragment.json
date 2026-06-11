@@ -1,0 +1,73 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=__REPO_ROOT__ __PYTHON__ __HOOK_SCRIPT__ --event SessionStart",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=__REPO_ROOT__ __PYTHON__ __HOOK_SCRIPT__ --event PreToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=__REPO_ROOT__ __PYTHON__ __HOOK_SCRIPT__ --event PostToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=__REPO_ROOT__ __PYTHON__ __HOOK_SCRIPT__ --event PostToolUseFailure",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=__REPO_ROOT__ __PYTHON__ __HOOK_SCRIPT__ --event Stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=__REPO_ROOT__ __PYTHON__ __HOOK_SCRIPT__ --event SessionEnd",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
