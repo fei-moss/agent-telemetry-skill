@@ -85,9 +85,21 @@ class Store:
         name = sp.get("name", "")
         kind = name.split()[0] if name else ""
         text = ""
+        facts: list[str] = []  # readable key=value lines from events + attrs
         for ev in sp.get("events", []):
             ea = _attrs(ev.get("attributes", []))
-            text = ea.get("text") or ea.get("result") or ea.get("decision.rationale") or text
+            primary = ea.get("text") or ea.get("result") or ea.get("decision.rationale")
+            if isinstance(primary, str) and primary.strip():
+                text = primary
+            for key, value in ea.items():
+                if key in ("text", "result"):
+                    continue
+                if value not in (None, "", []):
+                    facts.append(f"{key.split('.')[-1]}={value}")
+        # decision/cycle attributes carried directly on the span
+        for key in ("decision.name", "decision.confidence"):
+            if a.get(key) not in (None, ""):
+                facts.append(f"{key.split('.')[-1]}={a[key]}")
         try:
             start = int(sp.get("startTimeUnixNano", 0))
             end = int(sp.get("endTimeUnixNano", 0) or start)
@@ -111,6 +123,7 @@ class Store:
             "in_tok": a.get("gen_ai.usage.input_tokens"),
             "out_tok": a.get("gen_ai.usage.output_tokens"),
             "text": text if isinstance(text, str) else json.dumps(text, ensure_ascii=False),
+            "facts": facts[:8],
             "start": start,
             "end": end,
             "seq": seq,
@@ -133,6 +146,7 @@ class Store:
                 g = groups[sid] = {
                     "session": sid, "service": s["service"], "tenant": s["tenant"],
                     "layers": set(), "spans": 0, "last": 0, "tools": 0, "thinks": 0,
+                    "preview": "",
                 }
             g["spans"] += 1
             g["layers"].add(s["layer"])
@@ -143,11 +157,25 @@ class Store:
                 g["thinks"] += 1
             if s["service"] != "unknown":
                 g["service"] = s["service"]
+            if not g["preview"] and s["kind"] in ("reasoning", "message", "execute_tool"):
+                snippet = s["text"] or (s["facts"][0] if s["facts"] else "")
+                if snippet:
+                    g["preview"] = snippet[:80]
+        # fall back to any fact-bearing span (e.g. sdk cron) when no narrative
+        for s in self.all_spans():
+            sid = s["session"] or s["trace"] or "(none)"
+            g = groups.get(sid)
+            if g is not None and not g["preview"]:
+                snippet = s["text"] or (s["facts"][0] if s["facts"] else "")
+                if snippet:
+                    g["preview"] = snippet[:80]
         out = []
         for g in groups.values():
             g["layers"] = sorted(x for x in g["layers"] if x)
+            g["rich"] = g["thinks"] + g["tools"]
             out.append(g)
-        out.sort(key=lambda g: g["last"], reverse=True)
+        # rich sessions (with thinking/tools) first, then by recency
+        out.sort(key=lambda g: (g["rich"] > 0, g["last"]), reverse=True)
         return out
 
     def session_timeline(self, session_id: str) -> list:
@@ -195,22 +223,25 @@ header h1{font-size:16px;margin:0}header .stat{color:var(--mut);font-size:13px}h
 <header><h1>&#9877; Agent Telemetry</h1><span class=stat id=stat>loading&#8230;</span>
 <span class=stat style=margin-left:auto><span class=dot>&#9679;</span> auto 5s</span></header>
 <div class=wrap>
- <div class=list><div class=filter><input id=q placeholder="filter service / session..."></div><div id=sessions></div></div>
+ <div class=list><div class=filter><input id=q placeholder="filter service / session...">
+   <label style="display:block;margin-top:6px;color:#8b949e;font-size:12px;cursor:pointer">
+   <input type=checkbox id=richonly> 只看有内容(思考/工具)</label></div><div id=sessions></div></div>
  <div class=detail id=detail><div class=empty>&#8592; select a session</div></div>
 </div>
 <script>
-let cur=null, sessions=[], filter='';
+let cur=null, sessions=[], filter='', richonly=false;
 const ICON={reasoning:'\\u{1F9E0} think',message:'\\u{1F4AC} progress',execute_tool:'\\u{1F527} tool',chat:'\\u2699 model','agent.run':'\\u25B6 run'};
 function fmtTime(ms){if(!ms)return'';const d=new Date(ms);return d.toLocaleTimeString('zh-CN',{hour12:false})}
 async function loadStat(){const s=await (await fetch('api/stats')).json();
  document.getElementById('stat').textContent=`${s.sessions} sessions \\u00b7 ${s.spans} spans \\u00b7 ${s.services.join(', ')}`}
 async function loadSessions(){sessions=await (await fetch('api/sessions')).json();render()}
 function render(){const box=document.getElementById('sessions');const f=filter.toLowerCase();
- box.innerHTML=sessions.filter(s=>!f||(s.service+s.session).toLowerCase().includes(f)).map(s=>
+ box.innerHTML=sessions.filter(s=>(!f||(s.service+s.session).toLowerCase().includes(f))&&(!richonly||s.rich>0)).map(s=>
   `<div class="sess${s.session===cur?' active':''}" onclick="open_('${s.session.replace(/'/g,"")}')">
    <div class=svc>${esc(s.service)}</div>
    <div class=meta>${esc(s.session.slice(0,28))}</div>
    <div class=meta>${s.spans} spans \\u00b7 ${s.thinks} think \\u00b7 ${s.tools} tool \\u00b7 ${fmtTime(s.last)}</div>
+   ${s.preview?`<div class=meta style="color:#c9d1d9;margin-top:4px">${esc(s.preview)}</div>`:''}
    <div style=margin-top:4px>${s.layers.map(l=>`<span class="tag ${l}">${l}</span>`).join('')}</div></div>`).join('')
  ||'<div class=empty>no data</div>'}
 async function open_(id){cur=id;render();const items=await (await fetch('api/session?id='+encodeURIComponent(id))).json();
@@ -221,11 +252,13 @@ async function open_(id){cur=id;render();const items=await (await fetch('api/ses
   let sub=[];if(it.tool)sub.push(it.tool);if(it.model)sub.push(it.model);
   if(it.in_tok||it.out_tok)sub.push(`tok ${it.in_tok||0}/${it.out_tok||0}`);
   if(it.ms)sub.push(it.ms+'ms');if(it.layer)sub.push(it.layer);
-  const body=it.text?`<div class="body ${it.kind==='execute_tool'?'tool':''}">${esc(it.text)}</div>`:'';
+  let body=it.text?`<div class="body ${it.kind==='execute_tool'?'tool':''}">${esc(it.text)}</div>`:'';
+  if(!it.text&&it.facts&&it.facts.length)body=`<div class=body style=color:#9fb6cf>${it.facts.map(esc).join(' · ')}</div>`;
   return `<div class="item ${it.kind}"><div class=h><span class=ic>${ic}</span>
    <span class=sub>${esc(sub.join(' \\u00b7 '))}</span></div>${body}</div>`}).join('')}
 function esc(s){return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 document.getElementById('q').addEventListener('input',e=>{filter=e.target.value;render()});
+document.getElementById('richonly').addEventListener('change',e=>{richonly=e.target.checked;render()});
 async function tick(){await loadStat();await loadSessions();if(cur)open_(cur)}
 tick();setInterval(tick,5000);
 </script></body></html>"""
