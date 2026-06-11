@@ -146,7 +146,7 @@ class Store:
                 g = groups[sid] = {
                     "session": sid, "service": s["service"], "tenant": s["tenant"],
                     "layers": set(), "spans": 0, "last": 0, "tools": 0, "thinks": 0,
-                    "preview": "",
+                    "msgs": 0, "preview": "",
                 }
             g["spans"] += 1
             g["layers"].add(s["layer"])
@@ -155,6 +155,8 @@ class Store:
                 g["tools"] += 1
             if s["name"] == "reasoning":
                 g["thinks"] += 1
+            if s["name"] == "message":
+                g["msgs"] += 1
             if s["service"] != "unknown":
                 g["service"] = s["service"]
             if not g["preview"] and s["kind"] in ("reasoning", "message", "execute_tool"):
@@ -172,7 +174,7 @@ class Store:
         out = []
         for g in groups.values():
             g["layers"] = sorted(x for x in g["layers"] if x)
-            g["rich"] = g["thinks"] + g["tools"]
+            g["rich"] = g["thinks"] + g["tools"] + g["msgs"]
             out.append(g)
         # rich sessions (with thinking/tools) first, then by recency
         out.sort(key=lambda g: (g["rich"] > 0, g["last"]), reverse=True)
@@ -225,11 +227,11 @@ header h1{font-size:16px;margin:0}header .stat{color:var(--mut);font-size:13px}h
 <div class=wrap>
  <div class=list><div class=filter><input id=q placeholder="filter service / session...">
    <label style="display:block;margin-top:6px;color:#8b949e;font-size:12px;cursor:pointer">
-   <input type=checkbox id=richonly> 只看有内容(思考/工具)</label></div><div id=sessions></div></div>
+   <input type=checkbox id=richonly checked> 只看有内容(思考/进度/工具)</label></div><div id=sessions></div></div>
  <div class=detail id=detail><div class=empty>&#8592; select a session</div></div>
 </div>
 <script>
-let cur=null, sessions=[], filter='', richonly=false;
+let cur=null, sessions=[], filter='', richonly=true;
 const ICON={reasoning:'\\u{1F9E0} think',message:'\\u{1F4AC} progress',execute_tool:'\\u{1F527} tool',chat:'\\u2699 model','agent.run':'\\u25B6 run'};
 function fmtTime(ms){if(!ms)return'';const d=new Date(ms);return d.toLocaleTimeString('zh-CN',{hour12:false})}
 async function loadStat(){const s=await (await fetch('api/stats')).json();
