@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import shutil
 from pathlib import Path
 
@@ -43,14 +44,33 @@ def _ignore(_dir: str, names: list[str]) -> set[str]:
     return {n for n in names if n in EXCLUDE_NAMES or Path(n).suffix in EXCLUDE_SUFFIXES}
 
 
-INSTALL_SH = """#!/bin/bash
-# Minimal installer for the Agent Telemetry skill.
-# Detects installed runtimes (Claude Code / Codex / OpenClaw / Hermes) and
-# installs the matching adapter, then writes ~/.agent-telemetry/config.json.
-set -e
-cd "$(dirname "$0")"
-python3 scripts/setup.py "$@"
-"""
+def _install_sh(baked: dict) -> str:
+    """install.sh — optionally pre-bakes the backend connection so the end user
+    runs ./install.sh with no arguments and reporting works immediately."""
+    if baked.get("endpoint"):
+        args = [f'--endpoint "{baked["endpoint"]}"']
+        if baked.get("token"):
+            args.append(f'--token "{baked["token"]}"')
+        if baked.get("tenant"):
+            args.append(f'--tenant "{baked["tenant"]}"')
+        if baked.get("service"):
+            args.append(f'--service "{baked["service"]}"')
+        baked_line = "BAKED=(--auto " + " ".join(args) + ")"
+        run = 'python3 scripts/setup.py "${BAKED[@]}" "$@"'
+        note = "# Backend pre-configured by the vendor; just run ./install.sh"
+    else:
+        baked_line = "BAKED=(--auto)"
+        run = 'python3 scripts/setup.py "${BAKED[@]}" "$@"'
+        note = "# Pass --endpoint/--token/--tenant/--service to connect to your backend"
+    return (
+        "#!/bin/bash\n"
+        "# Minimal installer for the Agent Telemetry skill.\n"
+        f"{note}\n"
+        "set -e\n"
+        'cd "$(dirname "$0")"\n'
+        f"{baked_line}\n"
+        f"{run}\n"
+    )
 
 INSTALL_MD = """# 安装(最小化)
 
@@ -109,10 +129,13 @@ python3 scripts/setup.py --uninstall      # 卸载适配器
 """
 
 
-def build() -> None:
-    if SKILL_DIR.exists():
-        shutil.rmtree(SKILL_DIR)
-    SKILL_DIR.mkdir(parents=True)
+def build(baked: dict | None = None, out_dir: Path = SKILL_DIR) -> None:
+    baked = baked or {}
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+    global SKILL_DIR  # the rest of build() writes into SKILL_DIR
+    SKILL_DIR = out_dir
 
     count = 0
     for name in COPY_FILES:
@@ -135,15 +158,29 @@ def build() -> None:
 
     (SKILL_DIR / "INSTALL.md").write_text(INSTALL_MD, encoding="utf-8")
     sh = SKILL_DIR / "install.sh"
-    sh.write_text(INSTALL_SH, encoding="utf-8")
+    sh.write_text(_install_sh(baked), encoding="utf-8")
     sh.chmod(0o755)
     count += 2
 
-    print(f"generated skill/ — {count} files")
+    mode = "with baked backend config" if baked.get("endpoint") else "generic (no backend baked)"
+    print(f"generated {SKILL_DIR} — {count} files ({mode})")
     for p in sorted(SKILL_DIR.rglob("*")):
         if p.is_file():
             print("  " + str(p.relative_to(SKILL_DIR)))
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Build the minimal end-user skill/ bundle.")
+    parser.add_argument("--endpoint", help="bake backend endpoint so the user needs zero config")
+    parser.add_argument("--token")
+    parser.add_argument("--tenant")
+    parser.add_argument("--service")
+    parser.add_argument("--out", default=str(SKILL_DIR), help="output dir (default: skill/)")
+    args = parser.parse_args(argv)
+    baked = {k: getattr(args, k) for k in ("endpoint", "token", "tenant", "service") if getattr(args, k)}
+    build(baked, Path(args.out))
+    return 0
+
+
 if __name__ == "__main__":
-    build()
+    raise SystemExit(main())
