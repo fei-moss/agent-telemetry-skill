@@ -20,6 +20,7 @@ from pathlib import Path
 import json
 from typing import Any
 
+from ..config import load_config
 from ..redaction import Redactor
 from ..schema import TelemetrySpan
 from ._common import (
@@ -27,6 +28,7 @@ from ._common import (
     coerce_int,
     default_redactor,
     make_chat_span,
+    make_narrative_span,
     make_tool_span,
     parse_timestamp_nano,
 )
@@ -41,6 +43,9 @@ _MAX_OPEN_CALLS = 1024
 
 _TOOL_CALL_TYPES = frozenset({"function_call", "custom_tool_call"})
 _TOOL_OUTPUT_TYPES = frozenset({"function_call_output", "custom_tool_call_output"})
+# Roles whose message text is worth showing a human; "developer"/"system"
+# entries are sandbox/permission boilerplate, not conversation.
+_NARRATIVE_ROLES = frozenset({"user", "assistant"})
 
 
 class CodexParser:
@@ -51,6 +56,7 @@ class CodexParser:
         *,
         redactor: Redactor | None = None,
         state_dir: str | Path | None = None,
+        capture_narrative: bool | None = None,
     ):
         self._redactor = redactor or default_redactor()
         self._sessions = SessionResolver(AGENT_NAME, state_dir=state_dir)
@@ -58,6 +64,13 @@ class CodexParser:
         self._file_models: dict[str, str] = {}
         # (session_id, call_id) -> {"name", "arguments", "start"}
         self._open_calls: dict[tuple[str, str], dict[str, Any]] = {}
+        self._capture_narrative = (
+            load_config().capture_narrative
+            if capture_narrative is None
+            else capture_narrative
+        )
+        # session_id -> monotonic sequence (rollout messages can share a stamp)
+        self._sequence: dict[str, int] = {}
 
     def feed(self, line: str, source_path: str | Path) -> list[TelemetrySpan]:
         """Convert one rollout line into zero or more spans. Never raises."""
@@ -99,6 +112,8 @@ class CodexParser:
         self, payload: dict[str, Any], source: str, timestamp: int | None
     ) -> list[TelemetrySpan]:
         item_type = payload.get("type")
+        if item_type == "message":
+            return self._handle_message(payload, source, timestamp)
         if item_type in _TOOL_CALL_TYPES:
             call_id = payload.get("call_id")
             if isinstance(call_id, str) and call_id:
@@ -134,6 +149,31 @@ class CodexParser:
                 )
             ]
         return []
+
+    def _handle_message(
+        self, payload: dict[str, Any], source: str, timestamp: int | None
+    ) -> list[TelemetrySpan]:
+        """Emit a narrative ``message`` span for user/assistant conversation text."""
+        if not self._capture_narrative:
+            return []
+        if payload.get("role") not in _NARRATIVE_ROLES:
+            return []
+        text = _message_text(payload.get("content"))
+        if not text:
+            return []
+        session_id = self._session_id_for(source)
+        record = self._sessions.resolve(session_id)
+        return [
+            make_narrative_span(
+                record,
+                kind="message",
+                text=text,
+                source_file=source,
+                time_unix_nano=timestamp,
+                redactor=self._redactor,
+                sequence=self._next_sequence(session_id),
+            )
+        ]
 
     def _handle_event_msg(
         self, payload: dict[str, Any], source: str, timestamp: int | None
@@ -177,6 +217,11 @@ class CodexParser:
             self._open_calls.pop(next(iter(self._open_calls)), None)
         self._open_calls[key] = payload
 
+    def _next_sequence(self, session_id: str) -> int:
+        value = self._sequence.get(session_id, 0)
+        self._sequence[session_id] = value + 1
+        return value
+
 
 def _session_id_from_path(source: str) -> str:
     """Derive the session id from a rollout file name.
@@ -211,6 +256,26 @@ def _parse_arguments(payload: dict[str, Any]) -> Any:
         except ValueError:
             return raw
     return raw
+
+
+def _message_text(content: Any) -> str:
+    """Join the text blocks of a Codex message ``content`` list into one string.
+
+    Codex messages carry ``content`` as a list of blocks like
+    ``{"type": "input_text"|"output_text", "text": "..."}``. A plain string is
+    also accepted. Non-text blocks are ignored; the result is stripped.
+    """
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, dict):
+            text = block.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text)
+    return "\n".join(parts).strip()
 
 
 def _output_text(output: Any) -> str | None:

@@ -8,8 +8,14 @@ import unittest
 
 from agent_telemetry_skill import session_trace
 from agent_telemetry_skill.config import load_config, spool_dir
+from agent_telemetry_skill.redaction import RedactionConfig, Redactor
 from agent_telemetry_skill.spool import Spool
 from agent_telemetry_skill.watchers.codex import CodexParser, _session_id_from_path
+
+
+def _rich_redactor() -> Redactor:
+    """Content-capturing redactor so narrative text is emitted, not omitted."""
+    return Redactor(RedactionConfig(capture_content=True, max_string_length=4000))
 
 
 ENV_VARS = (
@@ -155,6 +161,51 @@ class CodexParserTests(WatcherTestBase):
     def test_session_id_from_path_handles_odd_names(self):
         self.assertEqual(_session_id_from_path("weird-name.jsonl"), "weird-name")
         self.assertEqual(_session_id_from_path("rollout-x.jsonl"), "x")
+
+    def test_message_narrative_disabled_by_default(self):
+        spans, _ = self._feed_fixture(CodexParser())
+
+        self.assertEqual([s for s in spans if s.name == "message"], [])
+
+    def test_message_narrative_captures_user_and_assistant_only(self):
+        parser = CodexParser(redactor=_rich_redactor(), capture_narrative=True)
+        spans, source = self._feed_fixture(parser)
+
+        messages = [s for s in spans if s.name == "message"]
+        # developer-role message must be filtered out; user + assistant kept
+        self.assertEqual(len(messages), 2)
+        texts = [m.events[0].attributes["text"] for m in messages]
+        self.assertIn("run the demo command and report back", texts[0])
+        self.assertIn("Done", texts[1])
+        for message in messages:
+            self.assertEqual(message.attributes["narrative.kind"], "message")
+            self.assertEqual(message.attributes["telemetry.source.file"], source)
+        # narrative.sequence preserves human-display order
+        self.assertLess(
+            messages[0].attributes["narrative.sequence"],
+            messages[1].attributes["narrative.sequence"],
+        )
+
+    def test_message_secret_is_redacted(self):
+        parser = CodexParser(redactor=_rich_redactor(), capture_narrative=True)
+        spans, _ = self._feed_fixture(parser)
+
+        assistant = [s for s in spans if s.name == "message"][1]
+        text = assistant.events[0].attributes["text"]
+        self.assertNotIn("fixturesecretvalue9999", text)
+        self.assertIn("[REDACTED]", text)
+
+    def test_message_spans_join_session_trace(self):
+        parser = CodexParser(redactor=_rich_redactor(), capture_narrative=True)
+        spans, _ = self._feed_fixture(parser)
+
+        record = session_trace.get(SESSION_ID)
+        for message in (s for s in spans if s.name == "message"):
+            self.assertEqual(message.trace_id, record.trace_id)
+            self.assertEqual(message.attributes["session.id"], SESSION_ID)
+            self.assertEqual(
+                message.attributes["telemetry.collection_layer"], "log_watch"
+            )
 
 
 class WatchSessionsScriptTests(WatcherTestBase):
