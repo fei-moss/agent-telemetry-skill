@@ -178,7 +178,7 @@ class Store:
                 g = groups[sid] = {
                     "session": sid, "service": s["service"], "tenant": s["tenant"],
                     "layers": set(), "spans": 0, "last": 0, "tools": 0, "thinks": 0,
-                    "msgs": 0, "preview": "",
+                    "msgs": 0, "decisions": 0, "preview": "",
                 }
             g["spans"] += 1
             g["layers"].add(s["layer"])
@@ -189,9 +189,17 @@ class Store:
                 g["thinks"] += 1
             if s["name"] == "message":
                 g["msgs"] += 1
+            if s["kind"] == "decision":
+                g["decisions"] += 1
+            # SDK/model-reported agents carry their reasoning as text on the run
+            # span (not a named "reasoning" span) — count it as a thinking item.
+            if s["text"] and s["kind"] == "agent.run":
+                g["thinks"] += 1
             if s["service"] != "unknown":
                 g["service"] = s["service"]
-            if not g["preview"] and s["kind"] in ("reasoning", "message", "execute_tool"):
+            if not g["preview"] and (
+                s["kind"] in ("reasoning", "message", "execute_tool", "decision", "agent.run")
+            ):
                 snippet = s["text"] or (s["facts"][0] if s["facts"] else "")
                 if snippet:
                     g["preview"] = snippet[:80]
@@ -206,7 +214,7 @@ class Store:
         out = []
         for g in groups.values():
             g["layers"] = sorted(x for x in g["layers"] if x)
-            g["rich"] = g["thinks"] + g["tools"] + g["msgs"]
+            g["rich"] = g["thinks"] + g["tools"] + g["msgs"] + g.get("decisions", 0)
             out.append(g)
         # rich sessions (with thinking/tools) first, then by recency
         out.sort(key=lambda g: (g["rich"] > 0, g["last"]), reverse=True)

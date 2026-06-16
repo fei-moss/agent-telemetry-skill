@@ -2,6 +2,7 @@
 dist/
 build/
 *.egg-info/
+*.zip
 
 # Python
 __pycache__/
