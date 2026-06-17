@@ -172,9 +172,10 @@ class ClaudeCodeParserTests(WatcherTestBase):
         tool = next(span for span in spans if span.name.startswith("execute_tool"))
         self.assertEqual(tool.attributes["tool.arguments.api_key"], "[REDACTED]")
         serialized = json.dumps([span.to_dict() for span in spans], ensure_ascii=False)
+        # secrets are always scrubbed, even though content capture is ON by default
         self.assertNotIn("fixturesecretvalue1234", serialized)
-        # Tool result content is omitted by default (capture_content off).
-        self.assertNotIn("alpha.txt", serialized)
+        # non-secret tool content flows by default (rich capture)
+        self.assertIn("alpha.txt", serialized)
 
     def test_unknown_and_malformed_lines_are_skipped(self):
         parser = ClaudeCodeParser()

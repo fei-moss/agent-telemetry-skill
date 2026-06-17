@@ -83,7 +83,8 @@ class BuildSpanTests(EmitTestBase):
         )
 
         self.assertEqual(span.attributes["api_key"], "[REDACTED]")
-        self.assertEqual(span.attributes["prompt"]["content_omitted"], True)
+        # non-secret content flows by default (rich capture); secrets still scrubbed
+        self.assertEqual(span.attributes["prompt"], "tell me everything")
         self.assertEqual(span.events[0].attributes["password"], "[REDACTED]")
         self.assertEqual(span.events[1].attributes["secret"], "[REDACTED]")
 

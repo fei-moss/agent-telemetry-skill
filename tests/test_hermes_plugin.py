@@ -143,24 +143,20 @@ class HermesPluginSpanTests(HermesPluginTestBase):
         for child in children:
             self.assertEqual(child.parent_span_id, root.span_id)
 
-    def test_user_message_content_omitted_by_default(self) -> None:
+    def test_user_message_captured_by_default(self) -> None:
         self.run_session(self.plugin)
 
         root = next(s for s in self.exporter.spans if s.name == "agent.run hermes:s1")
-        message = root.attributes.get("user.message")
-        self.assertIsInstance(message, dict)
-        self.assertTrue(message["content_omitted"])
-        self.assertNotIn("hello", json.dumps(root.attributes))
+        # content capture is ON by default: the user message is stored verbatim
+        self.assertEqual(root.attributes.get("user.message"), "hello")
 
     def test_tool_arguments_are_redacted(self) -> None:
         self.run_session(self.plugin)
 
         tool = next(s for s in self.exporter.spans if s.name == "execute_tool search")
+        # secrets are scrubbed; non-secret args flow by default (rich capture)
         self.assertEqual(tool.attributes.get("tool.arguments.api_key"), "[REDACTED]")
-        query = tool.attributes.get("tool.arguments.query")
-        self.assertIsInstance(query, dict)
-        self.assertTrue(query["content_omitted"])
-        self.assertNotIn("find docs", json.dumps(tool.attributes))
+        self.assertEqual(tool.attributes.get("tool.arguments.query"), "find docs")
 
     def test_distinct_sessions_use_distinct_traces(self) -> None:
         self.run_session(self.plugin, session_id="s1")

@@ -28,16 +28,18 @@ class TelemetryConfig:
     service: str = DEFAULT_SERVICE
     tenant: str = DEFAULT_TENANT
     environment: str = DEFAULT_ENVIRONMENT
-    capture_content: bool = False
+    capture_content: bool = True
     output: str | None = None
     home: Path = field(default_factory=default_home)
     enabled: bool = True
-    # Rich human-display capture. capture_narrative emits assistant thinking and
-    # message/progress text as spans (for a frontend timeline). max_content_chars
-    # caps any captured string (raise it high for full reasoning). disable_redaction
-    # turns the redactor into a passthrough — RAW content, no secret scrubbing.
-    capture_narrative: bool = False
-    max_content_chars: int = 500
+    # Rich human-display capture is ON by default: the whole point of this skill
+    # is to report assistant thinking + message/progress + tool content to a
+    # frontend timeline. capture_narrative emits thinking/message spans;
+    # max_content_chars caps any captured string (high, for full reasoning).
+    # disable_redaction turns the redactor into a passthrough — RAW content, no
+    # secret scrubbing (still OFF by default: secrets stay scrubbed).
+    capture_narrative: bool = True
+    max_content_chars: int = 4000
     disable_redaction: bool = False
 
 
@@ -57,16 +59,16 @@ def load_config() -> TelemetryConfig:
         )
         or DEFAULT_ENVIRONMENT,
         capture_content=_resolve_bool(
-            "AGENT_TELEMETRY_CAPTURE_CONTENT", file_values, "capture_content", False
+            "AGENT_TELEMETRY_CAPTURE_CONTENT", file_values, "capture_content", True
         ),
         output=_resolve_str("AGENT_TELEMETRY_OUTPUT", file_values, "output", None),
         home=Path(home_value).expanduser() if home_value else default_home(),
         enabled=_resolve_bool("AGENT_TELEMETRY_ENABLED", file_values, "enabled", True),
         capture_narrative=_resolve_bool(
-            "AGENT_TELEMETRY_CAPTURE_NARRATIVE", file_values, "capture_narrative", False
+            "AGENT_TELEMETRY_CAPTURE_NARRATIVE", file_values, "capture_narrative", True
         ),
         max_content_chars=_resolve_int(
-            "AGENT_TELEMETRY_MAX_CONTENT_CHARS", file_values, "max_content_chars", 500
+            "AGENT_TELEMETRY_MAX_CONTENT_CHARS", file_values, "max_content_chars", 4000
         ),
         disable_redaction=_resolve_bool(
             "AGENT_TELEMETRY_DISABLE_REDACTION", file_values, "disable_redaction", False

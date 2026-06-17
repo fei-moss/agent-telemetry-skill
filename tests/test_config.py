@@ -56,7 +56,10 @@ class ConfigResolutionTests(unittest.TestCase):
         self.assertEqual(cfg.service, "local-agent")
         self.assertEqual(cfg.tenant, "local-dev")
         self.assertEqual(cfg.environment, "local")
-        self.assertFalse(cfg.capture_content)
+        # rich human-display capture is ON by default
+        self.assertTrue(cfg.capture_content)
+        self.assertTrue(cfg.capture_narrative)
+        self.assertEqual(cfg.max_content_chars, 4000)
         self.assertIsNone(cfg.output)
         self.assertEqual(cfg.home, Path(self._tmp.name) / ".agent-telemetry")
         self.assertTrue(cfg.enabled)

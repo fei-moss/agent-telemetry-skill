@@ -151,8 +151,9 @@ class FullSessionFlowTests(ClaudeHookTestBase):
 
         result_events = [event for event in tool["events"] if event["name"] == "tool.result"]
         self.assertEqual(len(result_events), 1)
-        # Default-on redaction summarizes response content instead of storing it.
-        self.assertTrue(result_events[0]["attributes"]["tool.result.content_omitted"])
+        # content capture is ON by default: the response text is stored (secrets
+        # are still scrubbed by the redactor).
+        self.assertEqual(result_events[0]["attributes"]["tool.result"], "total 0")
 
         # Session state was cleaned up by SessionEnd.
         self.assertEqual(list((self.home / "state" / "sessions").glob("*.json")), [])
