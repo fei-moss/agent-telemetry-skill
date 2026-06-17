@@ -100,6 +100,13 @@ class Store:
         for key in ("decision.name", "decision.confidence"):
             if a.get(key) not in (None, ""):
                 facts.append(f"{key.split('.')[-1]}={a[key]}")
+        # tool-call arguments (e.g. the command) so the timeline shows WHAT a
+        # tool did, not only its output. Carried as tool.arguments.* span attrs.
+        arg_parts: list[str] = []
+        for key, value in a.items():
+            if key.startswith("tool.arguments.") and value not in (None, "", []):
+                arg_parts.append(f"{key.split('.')[-1]}={value}")
+        args = " · ".join(arg_parts[:6])
         try:
             start = int(sp.get("startTimeUnixNano", 0))
             end = int(sp.get("endTimeUnixNano", 0) or start)
@@ -124,6 +131,7 @@ class Store:
             "out_tok": a.get("gen_ai.usage.output_tokens"),
             "text": text if isinstance(text, str) else json.dumps(text, ensure_ascii=False),
             "facts": facts[:8],
+            "args": args,
             "start": start,
             "end": end,
             "seq": seq,
@@ -269,6 +277,7 @@ header h1{font-size:16px;margin:0;cursor:pointer}header .stat{color:var(--mut);f
 .item .sub{color:var(--mut);font-size:12px}
 .item .body{white-space:pre-wrap;word-break:break-word;margin-top:4px}
 .item .body.tool{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9fb6cf;max-height:220px;overflow:auto}
+.item .body.cmd{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#7ee787;border-left:2px solid #2ea043;padding-left:8px;margin-bottom:6px;white-space:pre-wrap;word-break:break-word}
 .empty{color:var(--mut);padding:40px;text-align:center}
 .filter{padding:8px 14px;border-bottom:1px solid var(--border)}
 .filter input{width:100%;background:#0d1117;border:1px solid var(--border);color:var(--fg);padding:6px 8px;border-radius:6px}
@@ -328,8 +337,9 @@ async function openSession(id){curSession=id;renderSessions();
   if(it.ms)sub.push(it.ms+'ms');if(it.layer)sub.push(it.layer);
   let body=it.text?`<div class="body ${it.kind==='execute_tool'?'tool':''}">${esc(it.text)}</div>`:'';
   if(!it.text&&it.facts&&it.facts.length)body=`<div class=body style=color:#9fb6cf>${it.facts.map(esc).join(' \\u00b7 ')}</div>`;
+  let cmd=it.args?`<div class="body cmd">$ ${esc(it.args)}</div>`:'';
   return `<div class="item ${it.kind}"><div class=h><span class=ic>${ic}</span>
-   <span class=sub>${esc(sub.join(' \\u00b7 '))}</span></div>${body}</div>`}).join('')}
+   <span class=sub>${esc(sub.join(' \\u00b7 '))}</span></div>${cmd}${body}</div>`}).join('')}
 async function tick(){await loadStat();
  if(view==='agents'){await loadAgents();renderAgents()}
  else{await loadAgents();sessions=await (await fetch('api/sessions?service='+encodeURIComponent(curAgent)).then(r=>r.json()));
