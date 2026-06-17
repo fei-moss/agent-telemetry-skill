@@ -41,8 +41,13 @@ _ROLLOUT_PREFIX = "rollout-"
 _ROLLOUT_DATETIME_CHARS = 20
 _MAX_OPEN_CALLS = 1024
 
-_TOOL_CALL_TYPES = frozenset({"function_call", "custom_tool_call"})
-_TOOL_OUTPUT_TYPES = frozenset({"function_call_output", "custom_tool_call_output"})
+# Generic tool capture: any response_item whose type ends in ``_call`` is a tool
+# invocation and any ``_output`` is its result. This covers function_call,
+# custom_tool_call AND built-in tools (web_search_call, file_search_call,
+# computer_call, mcp_call, ...) without an allowlist — we cannot predict which
+# tools a given user/runtime exposes.
+_TOOL_CALL_SUFFIX = "_call"
+_TOOL_OUTPUT_SUFFIX = "_output"
 # Roles whose message text is worth showing a human; "developer"/"system"
 # entries are sandbox/permission boilerplate, not conversation.
 _NARRATIVE_ROLES = frozenset({"user", "assistant"})
@@ -111,7 +116,7 @@ class CodexParser:
     def _handle_response_item(
         self, payload: dict[str, Any], source: str, timestamp: int | None
     ) -> list[TelemetrySpan]:
-        item_type = payload.get("type")
+        item_type = payload.get("type") or ""
         if item_type == "message":
             if payload.get("role") not in _NARRATIVE_ROLES:
                 return []
@@ -124,41 +129,72 @@ class CodexParser:
             return self._handle_narrative(
                 "reasoning", _reasoning_text(payload), source, timestamp
             )
-        if item_type in _TOOL_CALL_TYPES:
-            call_id = payload.get("call_id")
-            if isinstance(call_id, str) and call_id:
-                session_id = self._session_id_for(source)
-                self._remember_open_call(
-                    (session_id, call_id),
-                    {
-                        "name": payload.get("name"),
-                        "arguments": _parse_arguments(payload),
-                        "start": timestamp,
-                    },
-                )
-            return []
-        if item_type in _TOOL_OUTPUT_TYPES:
-            call_id = payload.get("call_id")
-            if not isinstance(call_id, str) or not call_id:
-                return []
-            session_id = self._session_id_for(source)
-            opened = self._open_calls.pop((session_id, call_id), None) or {}
-            tool_name = opened.get("name")
-            record = self._sessions.resolve(session_id)
-            return [
-                make_tool_span(
-                    record,
-                    tool_name=tool_name if isinstance(tool_name, str) else "unknown",
-                    call_id=call_id,
-                    arguments=opened.get("arguments"),
-                    source_file=source,
-                    start_time_unix_nano=opened.get("start"),
-                    end_time_unix_nano=timestamp,
-                    result=_output_text(payload.get("output")),
-                    redactor=self._redactor,
-                )
-            ]
+        # Order matters: ``*_call_output`` ends in both suffixes, so close first.
+        if item_type.endswith(_TOOL_OUTPUT_SUFFIX):
+            return self._close_tool_call(payload, source, timestamp)
+        if item_type.endswith(_TOOL_CALL_SUFFIX):
+            return self._handle_tool_call(payload, source, timestamp, item_type)
         return []
+
+    def _handle_tool_call(
+        self, payload: dict[str, Any], source: str, timestamp: int | None, item_type: str
+    ) -> list[TelemetrySpan]:
+        """Handle any ``*_call`` tool invocation.
+
+        Paired tools (function_call / custom_tool_call / computer_call / mcp_call
+        …) carry a ``call_id`` and are closed later by the matching ``*_output``.
+        Self-contained built-in tools (web_search_call, file_search_call …) have
+        no ``call_id`` and embed their outcome inline, so they are emitted now.
+        """
+        tool_name = payload.get("name") or item_type[: -len(_TOOL_CALL_SUFFIX)]
+        arguments = _parse_arguments(payload)
+        call_id = payload.get("call_id")
+        if isinstance(call_id, str) and call_id:
+            session_id = self._session_id_for(source)
+            self._remember_open_call(
+                (session_id, call_id),
+                {"name": tool_name, "arguments": arguments, "start": timestamp},
+            )
+            return []
+        session_id = self._session_id_for(source)
+        record = self._sessions.resolve(session_id)
+        return [
+            make_tool_span(
+                record,
+                tool_name=tool_name if isinstance(tool_name, str) and tool_name else "unknown",
+                call_id=str(payload.get("id") or ""),
+                arguments=arguments,
+                source_file=source,
+                start_time_unix_nano=timestamp,
+                end_time_unix_nano=timestamp,
+                result=_self_contained_result(payload),
+                redactor=self._redactor,
+            )
+        ]
+
+    def _close_tool_call(
+        self, payload: dict[str, Any], source: str, timestamp: int | None
+    ) -> list[TelemetrySpan]:
+        call_id = payload.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            return []
+        session_id = self._session_id_for(source)
+        opened = self._open_calls.pop((session_id, call_id), None) or {}
+        tool_name = opened.get("name")
+        record = self._sessions.resolve(session_id)
+        return [
+            make_tool_span(
+                record,
+                tool_name=tool_name if isinstance(tool_name, str) and tool_name else "unknown",
+                call_id=call_id,
+                arguments=opened.get("arguments"),
+                source_file=source,
+                start_time_unix_nano=opened.get("start"),
+                end_time_unix_nano=timestamp,
+                result=_output_text(payload.get("output")),
+                redactor=self._redactor,
+            )
+        ]
 
     def _handle_narrative(
         self, kind: str, text: str, source: str, timestamp: int | None
@@ -247,13 +283,19 @@ def _session_id_from_path(source: str) -> str:
 def _parse_arguments(payload: dict[str, Any]) -> Any:
     """Return tool-call arguments as a dict when possible.
 
-    ``function_call.arguments`` is a JSON-encoded string; ``custom_tool_call``
-    may carry ``input`` instead. Unparseable values are returned as-is and
+    Different tool shapes carry their inputs under different keys:
+    ``function_call.arguments`` (JSON string), ``custom_tool_call.input``, and
+    built-in tools like ``web_search_call.action`` (``{type, query, queries}``).
+    A bare ``query`` is also accepted. Unparseable values are returned as-is and
     redacted downstream.
     """
     raw = payload.get("arguments")
     if raw is None:
         raw = payload.get("input")
+    if raw is None:
+        raw = payload.get("action")  # built-in tools (web_search, file_search, ...)
+    if raw is None and payload.get("query") is not None:
+        raw = {"query": payload.get("query")}
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
@@ -261,6 +303,16 @@ def _parse_arguments(payload: dict[str, Any]) -> Any:
         except ValueError:
             return raw
     return raw
+
+
+def _self_contained_result(payload: dict[str, Any]) -> str | None:
+    """Built-in tools embed their outcome inline (no separate ``*_output``).
+
+    Surface the ``status`` (e.g. ``completed``) as a thin result; the useful
+    detail (query/results) is already captured from the arguments.
+    """
+    status = payload.get("status")
+    return status if isinstance(status, str) and status else None
 
 
 def _message_text(content: Any) -> str:

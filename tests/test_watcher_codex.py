@@ -69,15 +69,22 @@ class CodexParserTests(WatcherTestBase):
     def test_function_call_correlates_with_output(self):
         spans, source = self._feed_fixture(CodexParser())
 
-        tool_spans = [span for span in spans if span.name.startswith("execute_tool")]
-        self.assertEqual(len(tool_spans), 1)
-        tool = tool_spans[0]
-        self.assertEqual(tool.name, "execute_tool exec_command")
+        tool = next(s for s in spans if s.name == "execute_tool exec_command")
         self.assertEqual(tool.attributes["gen_ai.tool.name"], "exec_command")
         self.assertEqual(tool.attributes["tool.call.id"], "call_fixture_1")
         self.assertEqual(tool.attributes["telemetry.source.file"], source)
         self.assertEqual(tool.attributes["tool.arguments.cmd"], "echo fixture")
         self.assertLess(tool.start_time_unix_nano, tool.end_time_unix_nano)
+
+    def test_self_contained_tool_call_is_captured_generically(self):
+        # web_search_call has no call_id and no separate *_output: it is a
+        # self-contained built-in tool. Generic capture must still surface it,
+        # deriving the tool name from the type and the query from `action`.
+        spans, _ = self._feed_fixture(CodexParser(redactor=_rich_redactor()))
+
+        web = next(s for s in spans if s.name == "execute_tool web_search")
+        self.assertEqual(web.attributes["gen_ai.tool.name"], "web_search")
+        self.assertEqual(web.attributes["tool.arguments.query"], "finance: BTC")
 
     def test_token_count_produces_one_chat_span_with_usage(self):
         spans, _ = self._feed_fixture(CodexParser())
