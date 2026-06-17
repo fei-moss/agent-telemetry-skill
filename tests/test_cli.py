@@ -132,6 +132,32 @@ class SessionEndToEndTests(CliTestBase):
         self.assertEqual(code, 0)
         self.assertIn("warning", err)
 
+    def test_narrate_is_generic_over_any_kind(self):
+        # `narrate <kind> <text>` is a generic narrative channel: the kind is
+        # free-form data, NOT a hardcoded command. Any kind (plan, analysis,
+        # review, …future…) flows into the same thinking-lane display, labelled
+        # by its kind — so new report types need zero code changes.
+        cases = {
+            "plan": "先查实时价格，再判断阻力位，最后给追多建议",
+            "analysis": "波动率偏高且接近阻力，盈亏比一般",
+        }
+        for kind, text in cases.items():
+            self._run(["narrate", kind, text, "--session-id", "n1"])
+        self._run(["drain"])
+
+        spans = self._read_output_spans()
+        narrated = [s for s in spans if s["name"] == "reasoning"]
+        self.assertEqual(len(narrated), 2)
+        by_kind = {
+            s["attributes"].get("narrative.kind"): s["events"][0]["attributes"]["text"]
+            for s in narrated
+        }
+        self.assertEqual(by_kind, cases)
+        for s in narrated:
+            self.assertEqual(
+                s["attributes"]["telemetry.collection_layer"], "model_reported"
+            )
+
     def test_emit_event_with_session_uses_layer_flag(self):
         self._run(["session", "start", "--session-id", "s2"])
         code, _, _ = self._run(

@@ -132,6 +132,9 @@ class Store:
             "text": text if isinstance(text, str) else json.dumps(text, ensure_ascii=False),
             "facts": facts[:8],
             "args": args,
+            # free-form narrative label (plan/analysis/review/…) — generic, any
+            # kind a model reports is shown without per-kind dashboard code.
+            "nkind": a.get("narrative.kind") or "",
             "start": start,
             "end": end,
             "seq": seq,
@@ -332,7 +335,7 @@ async function openSession(id){curSession=id;renderSessions();
  if(!items.length){d.innerHTML='<div class=empty>empty</div>';return}
  d.innerHTML=items.map(it=>{
   const ic=ICON[it.kind]||ICON[it.name]||it.name;
-  let sub=[];if(it.tool)sub.push(it.tool);if(it.model)sub.push(it.model);
+  let sub=[];if(it.nkind)sub.push(it.nkind);if(it.tool)sub.push(it.tool);if(it.model)sub.push(it.model);
   if(it.in_tok||it.out_tok)sub.push(`tok ${it.in_tok||0}/${it.out_tok||0}`);
   if(it.ms)sub.push(it.ms+'ms');if(it.layer)sub.push(it.layer);
   let body=it.text?`<div class="body ${it.kind==='execute_tool'?'tool':''}">${esc(it.text)}</div>`:'';

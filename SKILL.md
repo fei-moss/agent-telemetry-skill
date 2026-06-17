@@ -57,6 +57,17 @@ agent-telemetry decision use_search \
   --session-id <SESSION_ID>
 ```
 
+Share readable thinking with `narrate <kind> "<text>"`. Codex encrypts its
+real reasoning, so this is how a human sees your intent. `kind` is free-form
+(`plan`, `analysis`, `review`, …); every kind shows in the thinking lane,
+labelled by its kind. At the START of a task, narrate a short plan:
+
+```bash
+agent-telemetry narrate plan \
+  "先查实时价格和波动率，再判断是否接近阻力，最后给追多/观望建议" \
+  --session-id <SESSION_ID>
+```
+
 Report retries, fallbacks, and anomalies as events (attributes are a JSON
 object on stdin):
 

@@ -63,6 +63,14 @@ def build_parser() -> argparse.ArgumentParser:
     decision.add_argument("--confidence", type=float, default=None)
     decision.add_argument("--session-id", default=None)
 
+    narrate = sub.add_parser(
+        "narrate",
+        help="report readable narrative content (plan/analysis/…), shown in the thinking lane",
+    )
+    narrate.add_argument("kind", help="free-form label, e.g. plan, analysis, review")
+    narrate.add_argument("text", help="the human-readable content")
+    narrate.add_argument("--session-id", default=None)
+
     session = sub.add_parser("session", help="manage cross-process session traces")
     session_sub = session.add_subparsers(dest="session_command", required=True)
     start = session_sub.add_parser("start", help="register a session trace")
@@ -103,6 +111,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _cmd_emit_event(args, config)
     if args.command == "decision":
         return _cmd_decision(args, config)
+    if args.command == "narrate":
+        return _cmd_narrate(args, config)
     if args.command == "session":
         return _cmd_session(args, config)
     if args.command == "drain":
@@ -162,6 +172,38 @@ def _cmd_decision(args: argparse.Namespace, config: TelemetryConfig) -> int:
     )
     if not emitted:
         print("agent-telemetry: warning: decision was not emitted", file=sys.stderr)
+    _opportunistic_drain(config)
+    return 0
+
+
+def _cmd_narrate(args: argparse.Namespace, config: TelemetryConfig) -> int:
+    """Report readable narrative content for human display.
+
+    Codex encrypts its real chain-of-thought, so the model can voluntarily
+    narrate readable content instead. This is a GENERIC channel: ``kind`` is
+    free-form data (plan, analysis, review, …) — every kind flows into the same
+    thinking-lane display, labelled by its kind, so new report types need no new
+    code. Emitted as a ``reasoning`` span (the thinking lane) carrying the text
+    and ``narrative.kind``.
+    """
+    attributes: dict[str, Any] = {"narrative.kind": args.kind}
+    trace_id: str | None = None
+    parent_span_id: str | None = None
+    if args.session_id:
+        record = session_trace.begin(args.session_id)
+        trace_id = record.trace_id
+        parent_span_id = record.root_span_id
+        attributes["session.id"] = args.session_id
+    emitted = emit.emit_span(
+        name="reasoning",
+        trace_id=trace_id or emit.new_trace_id(),
+        parent_span_id=parent_span_id,
+        attributes=attributes,
+        events=[{"name": "reasoning", "attributes": {"text": args.text}}],
+        collection_layer=args.layer,
+    )
+    if not emitted:
+        print("agent-telemetry: warning: narration was not emitted", file=sys.stderr)
     _opportunistic_drain(config)
     return 0
 
