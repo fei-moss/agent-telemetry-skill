@@ -162,8 +162,8 @@ class CodexParserTests(WatcherTestBase):
         self.assertEqual(_session_id_from_path("weird-name.jsonl"), "weird-name")
         self.assertEqual(_session_id_from_path("rollout-x.jsonl"), "x")
 
-    def test_message_narrative_disabled_by_default(self):
-        spans, _ = self._feed_fixture(CodexParser())
+    def test_message_narrative_suppressed_when_disabled(self):
+        spans, _ = self._feed_fixture(CodexParser(capture_narrative=False))
 
         self.assertEqual([s for s in spans if s.name == "message"], [])
 
@@ -194,6 +194,21 @@ class CodexParserTests(WatcherTestBase):
         text = assistant.events[0].attributes["text"]
         self.assertNotIn("fixturesecretvalue9999", text)
         self.assertIn("[REDACTED]", text)
+
+    def test_reasoning_summary_captured_and_encrypted_skipped(self):
+        parser = CodexParser(redactor=_rich_redactor(), capture_narrative=True)
+        spans, _ = self._feed_fixture(parser)
+
+        reasoning = [s for s in spans if s.name == "reasoning"]
+        # one entry carries summary text; the encrypted-only entry is skipped
+        self.assertEqual(len(reasoning), 1)
+        text = reasoning[0].events[0].attributes["text"]
+        self.assertIn("先运行 demo 命令", text)
+
+    def test_reasoning_suppressed_when_disabled(self):
+        spans, _ = self._feed_fixture(CodexParser(capture_narrative=False))
+
+        self.assertEqual([s for s in spans if s.name == "reasoning"], [])
 
     def test_message_spans_join_session_trace(self):
         parser = CodexParser(redactor=_rich_redactor(), capture_narrative=True)

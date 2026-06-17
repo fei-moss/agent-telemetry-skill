@@ -113,7 +113,17 @@ class CodexParser:
     ) -> list[TelemetrySpan]:
         item_type = payload.get("type")
         if item_type == "message":
-            return self._handle_message(payload, source, timestamp)
+            if payload.get("role") not in _NARRATIVE_ROLES:
+                return []
+            return self._handle_narrative(
+                "message", _message_text(payload.get("content")), source, timestamp
+            )
+        if item_type == "reasoning":
+            # Codex usually encrypts reasoning (encrypted_content) with an empty
+            # summary; capture the summary text only when it is present.
+            return self._handle_narrative(
+                "reasoning", _reasoning_text(payload), source, timestamp
+            )
         if item_type in _TOOL_CALL_TYPES:
             call_id = payload.get("call_id")
             if isinstance(call_id, str) and call_id:
@@ -150,23 +160,18 @@ class CodexParser:
             ]
         return []
 
-    def _handle_message(
-        self, payload: dict[str, Any], source: str, timestamp: int | None
+    def _handle_narrative(
+        self, kind: str, text: str, source: str, timestamp: int | None
     ) -> list[TelemetrySpan]:
-        """Emit a narrative ``message`` span for user/assistant conversation text."""
-        if not self._capture_narrative:
-            return []
-        if payload.get("role") not in _NARRATIVE_ROLES:
-            return []
-        text = _message_text(payload.get("content"))
-        if not text:
+        """Emit a narrative span (``message`` or ``reasoning``) for human display."""
+        if not self._capture_narrative or not text:
             return []
         session_id = self._session_id_for(source)
         record = self._sessions.resolve(session_id)
         return [
             make_narrative_span(
                 record,
-                kind="message",
+                kind=kind,
                 text=text,
                 source_file=source,
                 time_unix_nano=timestamp,
@@ -276,6 +281,30 @@ def _message_text(content: Any) -> str:
             if isinstance(text, str) and text.strip():
                 parts.append(text)
     return "\n".join(parts).strip()
+
+
+def _reasoning_text(payload: dict[str, Any]) -> str:
+    """Extract plaintext reasoning from a Codex ``reasoning`` response item.
+
+    Codex carries a ``summary`` list of ``{"type": "summary_text", "text": ...}``
+    blocks plus an opaque ``encrypted_content`` blob. Only the summary text is
+    human-readable; when it is absent (encrypted-only) there is nothing to show.
+    """
+    summary = payload.get("summary")
+    if isinstance(summary, list):
+        parts = [
+            block["text"]
+            for block in summary
+            if isinstance(block, dict)
+            and isinstance(block.get("text"), str)
+            and block["text"].strip()
+        ]
+        if parts:
+            return "\n".join(parts).strip()
+    content = payload.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    return ""
 
 
 def _output_text(output: Any) -> str | None:
