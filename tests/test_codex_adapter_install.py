@@ -44,6 +44,17 @@ class CodexAdapterTestBase(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Never touch real launchd/systemd from tests.
+        ip = mock.patch.object(
+            self.install, "install_persistent_watcher", return_value="launchd loaded (stub)"
+        )
+        self.mock_install_watcher = ip.start()
+        self.addCleanup(ip.stop)
+        up = mock.patch.object(
+            self.install, "uninstall_persistent_watcher", return_value="removed (stub)"
+        )
+        self.mock_uninstall_watcher = up.start()
+        self.addCleanup(up.stop)
 
     def run_install(self, argv: list[str]) -> tuple[int, str]:
         stdout = io.StringIO()
@@ -108,7 +119,7 @@ class CodexInstallScriptTest(CodexAdapterTestBase):
         backup = self.config.with_name("config.toml.bak-agent-telemetry")
         self.assertEqual(backup.read_text(encoding="utf-8"), EXISTING_CONFIG)
 
-    def test_install_skips_foreign_notify(self) -> None:
+    def test_install_skips_foreign_notify_and_installs_resident_watcher(self) -> None:
         foreign = 'notify = ["/usr/bin/true"]\n' + EXISTING_CONFIG
         self.config.write_text(foreign, encoding="utf-8")
 
@@ -116,6 +127,10 @@ class CodexInstallScriptTest(CodexAdapterTestBase):
 
         self.assertEqual(code, 0)
         self.assertIn("SKIPPED", output)
+        self.assertIn("resident watcher", output)
+        # notify occupied -> resident watcher used instead
+        self.mock_install_watcher.assert_called_once()
+        # config.toml left untouched (we did not wire notify)
         self.assertEqual(self.config.read_text(encoding="utf-8"), foreign)
 
     def test_notify_inside_table_is_not_foreign(self) -> None:

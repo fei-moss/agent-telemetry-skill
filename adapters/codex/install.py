@@ -195,14 +195,38 @@ def print_runtime_guidance(codex_home: Path) -> None:
     print("CODEX_HOME to point at the Codex home directory to manage explicitly.")
 
 
+def _watcher_service():
+    """Import the cross-platform persistent-watcher service helper."""
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from agent_telemetry_skill import watcher_service
+
+    return watcher_service
+
+
+def install_persistent_watcher() -> str:
+    """Install + start a resident watcher service (launchd/systemd). Best effort."""
+    try:
+        return _watcher_service().install(
+            "codex", watch_script=str(WATCH_SCRIPT), pythonpath=str(REPO_ROOT)
+        )
+    except Exception as exc:  # never break the installer
+        return f"service error: {exc}"
+
+
+def uninstall_persistent_watcher() -> str:
+    try:
+        return _watcher_service().uninstall("codex")
+    except Exception as exc:
+        return f"service error: {exc}"
+
+
 def print_watcher_only_guidance(foreign_notify: str) -> None:
     print("notify wiring: SKIPPED — config.toml already has a notify program:")
     print(f"  {foreign_notify}")
     print("Codex supports only one notify program; yours was left untouched.")
-    print("Run the watcher persistently instead (watcher-only mode):")
-    print(f"  python3 {WATCH_SCRIPT} --runtime codex")
-    print("or chain notify_hook.py from your existing notify program; see")
-    print(f"  {Path(__file__).resolve().parent / 'README.md'}")
+    print("Installing a RESIDENT watcher instead (no notify needed):")
+    print(f"  resident watcher: {install_persistent_watcher()}")
 
 
 def cmd_status(codex_home: Path) -> int:
@@ -287,6 +311,9 @@ def cmd_uninstall(codex_home: Path, *, assume_yes: bool) -> int:
     if not codex_home.is_dir():
         print(f"Codex CLI not detected: {codex_home}; nothing to uninstall.")
         return 0
+    # Always tear down the resident watcher (installed when notify was occupied),
+    # independent of whether a managed notify block exists.
+    print(f"resident watcher: {uninstall_persistent_watcher()}")
     path = config_path(codex_home)
     text = read_config_text(path)
     if text is None:
