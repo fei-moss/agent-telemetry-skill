@@ -181,6 +181,27 @@ class InstallDispatchTest(SetupTestBase):
         # No post-install info on uninstall.
         self.assertNotIn("spool dir:", output)
 
+    def test_install_writes_executable_cli_shim_on_path(self) -> None:
+        code, output, _ = self.run_main(["--runtime", "codex"])
+
+        self.assertEqual(code, 0)
+        shim = self.home / ".local" / "bin" / "agent-telemetry"
+        self.assertTrue(shim.exists())
+        self.assertTrue(os.access(shim, os.X_OK))
+        body = shim.read_text(encoding="utf-8")
+        # the shim execs the CLI module so `agent-telemetry decision ...` works
+        self.assertIn("agent_telemetry_skill.cli", body)
+        self.assertIn("cli launcher", output)
+
+    def test_uninstall_removes_cli_shim(self) -> None:
+        self.run_main(["--runtime", "codex"])
+        shim = self.home / ".local" / "bin" / "agent-telemetry"
+        self.assertTrue(shim.exists())
+
+        self.run_main(["--runtime", "codex", "--uninstall"])
+
+        self.assertFalse(shim.exists())
+
     def test_repeated_runtime_flag_deduplicates(self) -> None:
         code, _, _ = self.run_main(["--runtime", "codex", "--runtime", "codex"])
 

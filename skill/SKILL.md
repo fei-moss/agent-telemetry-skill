@@ -45,6 +45,11 @@ agent-telemetry status
 Your ONLY ongoing duty. Before committing to a tool, plan branch, or model
 choice, record why:
 
+> **Codex note:** the log watcher captures your tool calls, messages and token
+> usage, but Codex stores reasoning as `encrypted_content` (no plaintext), so
+> the watcher cannot recover your thinking. A `decision` is the ONLY way the
+> backend learns *why* you acted — report one at each meaningful choice point.
+
 ```bash
 agent-telemetry decision use_search \
   --rationale "Need external context before answering" \

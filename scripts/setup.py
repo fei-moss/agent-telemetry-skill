@@ -74,6 +74,7 @@ CONFIG_FILE_MODE = 0o600
 ADAPTER_TIMEOUT_SECONDS = 120.0
 CONNECTIVITY_BUDGET_SECONDS = 5.0
 WATCH_SCRIPT = _REPO_ROOT / "scripts" / "watch_sessions.py"
+CLI_SHIM_NAME = "agent-telemetry"
 
 # Module-level so tests can point this at a stub adapters directory.
 ADAPTERS_DIR = _REPO_ROOT / "adapters"
@@ -174,6 +175,48 @@ def write_config(values: dict[str, str]) -> Path:
     path.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.chmod(path, CONFIG_FILE_MODE)
     return path
+
+
+def cli_bin_dir() -> Path:
+    """PATH directory for the CLI launcher (read at call time for test isolation)."""
+    return Path.home() / ".local" / "bin"
+
+
+def install_cli_shim() -> str:
+    """Write an ``agent-telemetry`` launcher onto PATH.
+
+    The skill is copy-installed (no pip console script), so the model-reported
+    CLI would otherwise be missing — ``agent-telemetry decision ...`` would be
+    ``command not found``. This shim execs the module with PYTHONPATH pinned to
+    the install dir so it works out of the box. Returns a one-line status.
+    """
+    bin_dir = cli_bin_dir()
+    shim = bin_dir / CLI_SHIM_NAME
+    try:
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        shim.write_text(
+            "#!/bin/sh\n"
+            "# agent-telemetry CLI launcher (installed by setup.py; do not edit)\n"
+            f"exec env PYTHONPATH={shlex.quote(str(_REPO_ROOT))} "
+            'python3 -m agent_telemetry_skill.cli "$@"\n',
+            encoding="utf-8",
+        )
+        os.chmod(shim, 0o755)
+    except Exception as exc:  # never fail the whole install over the shim
+        return f"shim error: {exc}"
+    on_path = str(bin_dir) in os.environ.get("PATH", "").split(os.pathsep)
+    return f"{shim} ({'on PATH' if on_path else f'add {bin_dir} to PATH'})"
+
+
+def uninstall_cli_shim() -> str:
+    shim = cli_bin_dir() / CLI_SHIM_NAME
+    try:
+        if shim.exists():
+            shim.unlink()
+            return f"removed {shim}"
+    except Exception as exc:
+        return f"shim error: {exc}"
+    return "not installed"
 
 
 def print_env_exports(values: dict[str, str]) -> None:
@@ -459,6 +502,10 @@ def _run(args: argparse.Namespace) -> int:
 
     detections = detect_runtimes()
     action = "uninstall" if args.uninstall else "install"
+    # CLI launcher on PATH — independent of which runtimes are present, so the
+    # model-reported `agent-telemetry decision` path works after a copy-install.
+    shim_status = uninstall_cli_shim() if args.uninstall else install_cli_shim()
+    print(f"cli launcher   : {shim_status}")
     targets = resolve_targets(args, detections, action)
     if not targets:
         return 0
